@@ -14,6 +14,14 @@ LINE_NUMBER=re.compile(r'^N\d+\s*')
 COMMAND=re.compile(r'([GMT]\d+(?:\.\d+)?)(?:\s|(?=[A-Z])|$)')
 MOTION_CODES=frozenset(('G0','G1','G2','G3'))
 SETTINGS=re.compile(r';\s*(filament_type|filament_colour|filament_settings_id|filament_density|filament_diameter|printer_model|printer_settings_id|printer_variant|nozzle_diameter|wall_loops|layer_height|sparse_infill_density|sparse_infill_pattern|nozzle_temperature|nozzle_temperature_initial_layer|bed_temperature|chamber_temperature)\s*[:=]\s*(.*)',re.I)
+MASS_HEADER=re.compile(r';\s*(?:total filament (?:used|weight)|filament used)\s*\[g\]\s*[:=]\s*(.+)',re.I)
+LAYER_HEADER=re.compile(r';\s*total layer number\s*:\s*(\d+)',re.I)
+HEIGHT_HEADER=re.compile(r';\s*max_z_height\s*:\s*('+NUMBER+r')',re.I)
+LAYER_MARKER=re.compile(r';\s*(?:LAYER:|LAYER_CHANGE\b|CHANGE_LAYER\b)',re.I)
+TIME_HEADER=re.compile(r';\s*time\s*:',re.I)
+TIME_VALUE=re.compile(r':\s*(\d+)')
+SETPOINT=re.compile(r'[SR]\s*('+NUMBER+r')')
+MASS_NUMBER=re.compile(NUMBER)
 
 def plain(value):
     return None if value is None else format(value.normalize() if value else D('0'),'f')
@@ -62,12 +70,12 @@ def scan(raw,total,progress=None,cancelled=None):
                 duration=seconds(lower.split('total estimated time:',1)[1]);sources['duration_seconds']='GCODE_TOTAL_TIME_HEADER'
             elif duration is None and ('estimated printing time' in lower or 'estimated print time' in lower):
                 duration=seconds(lower);sources['duration_seconds']='GCODE_HEADER'
-            elif duration is None and re.match(r';\s*time\s*:',lower):
-                match=re.search(r':\s*(\d+)',lower)
+            elif duration is None and TIME_HEADER.match(lower):
+                match=TIME_VALUE.search(lower)
                 if match:duration=int(match[1]);sources['duration_seconds']='GCODE_HEADER'
-            match=re.match(r';\s*(?:total filament (?:used|weight)|filament used)\s*\[g\]\s*[:=]\s*(.+)',text,re.I)
+            match=MASS_HEADER.match(text)
             if match:
-                parsed=[D(v) for v in re.findall(NUMBER,match[1])]
+                parsed=[D(v) for v in MASS_NUMBER.findall(match[1])]
                 if any(v<0 for v in parsed):raise ValueError('INVALID_FILAMENT_MASS')
                 if lower.startswith('; total filament'):
                     grams=sum(parsed,D(0))
@@ -75,11 +83,11 @@ def scan(raw,total,progress=None,cancelled=None):
                     mass_values=parsed
                     if grams is None:grams=sum(parsed,D(0))
                 sources['grams']='GCODE_HEADER'
-            match=re.match(r';\s*total layer number\s*:\s*(\d+)',text,re.I)
+            match=LAYER_HEADER.match(text)
             if match:header_layers=int(match[1])
-            match=re.match(r';\s*max_z_height\s*:\s*('+NUMBER+r')',text,re.I)
+            match=HEIGHT_HEADER.match(text)
             if match:max_z=D(match[1])
-            if re.match(r';\s*(?:LAYER:|LAYER_CHANGE\b|CHANGE_LAYER\b)',text,re.I):layers+=1
+            if LAYER_MARKER.match(text):layers+=1
             if lower.startswith('; feature:') or lower.startswith(';type:'):feature=lower.split(':',1)[1].strip()
             match=SETTINGS.match(text)
             if match:
@@ -108,7 +116,7 @@ def scan(raw,total,progress=None,cancelled=None):
         elif code=='G90.1':absolute_center=True
         elif code=='G91.1':absolute_center=False
         elif code in ('M104','M109','M140','M190','M141','M191'):
-            value=re.search(r'[SR]\s*('+NUMBER+r')',command)
+            value=SETPOINT.search(command)
             if value:
                 component='nozzle' if code in ('M104','M109') else 'bed' if code in ('M140','M190') else 'chamber'
                 process.setpoint(component,float(value[1]))
