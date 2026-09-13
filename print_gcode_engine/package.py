@@ -54,7 +54,7 @@ def analyze_package(path,progress=None,cancelled=None):
             if settings:
                 model=' '.join(str(settings.get(k,'')) for k in ('printer_model','printer_settings_id','printer_variant'))
                 lower=model.lower()
-                for key,name in [('H2C','h2c'),('H2D','h2d'),('A1_MINI','a1 mini'),('A1','a1'),('X1E','x1e'),('X1C','x1 carbon'),('P1S','p1s'),('P1P','p1p'),('P2S','p2s'),('Q2','q2'),('Q1','q1'),('X_MAX3','x max 3'),('X_PLUS3','x plus 3'),('K1_MAX','k1 max'),('K1C','k1c'),('K1','k1'),('K2_PLUS','k2 plus'),('K2','k2'),('MK4S','mk4s'),('MK4','mk4'),('MK3S_PLUS','mk3s'),('XL','prusa xl'),('MINI_PLUS','mini+')]:
+                for key,name in [('VORON_2_4','voron 2.4'),('H2C','h2c'),('H2D','h2d'),('A1_MINI','a1 mini'),('A1','a1'),('X1E','x1e'),('X1C','x1 carbon'),('P1S','p1s'),('P1P','p1p'),('P2S','p2s'),('Q2','q2'),('Q1','q1'),('X_MAX3','x max 3'),('X_PLUS3','x plus 3'),('K1_MAX','k1 max'),('K1C','k1c'),('K1','k1'),('K2_PLUS','k2 plus'),('K2','k2'),('MK4S','mk4s'),('MK4','mk4'),('MK3S_PLUS','mk3s'),('XL','prusa xl'),('MINI_PLUS','mini+')]:
                     if name in lower: result['printer']=key;break
                 nozzles=settings.get('nozzle_diameter',[])
                 if isinstance(nozzles,list) and nozzles:result['nozzle_diameter_mm']=str(nozzles[0])

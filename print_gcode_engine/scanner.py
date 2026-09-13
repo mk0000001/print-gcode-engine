@@ -195,6 +195,7 @@ def scan(raw,total,progress=None,cancelled=None):
     # G-code-only upload still gets a deterministic catalog model whenever the
     # slicer left an identifiable token in its header.
     detected_printer=next((key for key,name in [
+        ('VORON_2_4','voron 2.4'),('VORON_2_4','voron2.4'),
         ('STEALTH','stealthchanger'),
         ('H2C','h2c'),('H2D','h2d'),('A1_MINI','a1 mini'),('A1','a1'),
         ('X1E','x1e'),('X1C','x1 carbon'),('P1S','p1s'),('P1P','p1p'),
@@ -217,7 +218,8 @@ def scan(raw,total,progress=None,cancelled=None):
             'z_quantization_mm':0.001,'incomplete':section_profile_limited,
             'layers':[{'z_mm':z,'volume_mm3':round(volume,6)} for z,volume in sorted(layer_volume.items())]},
         'normal_output_color_count':len({u['color'] for u in usage if u['color']}) or None,
-        'printer':detected_printer,'toolchanger_system':'STEALTHCHANGER' if detected_printer=='STEALTH' else None,
+        'printer':detected_printer,'toolchanger_system':'STEALTHCHANGER' if (stealth_start or 'stealthchanger' in model_text) else None,
+        'mmu_system':None,
         'multicolor_system':'VORTEK' if detected_printer in ('H2C','H2D') and ('multi_material' in config.get('single_extruder_multi_material','').lower() or config.get('filament_map_mode','').lower().startswith('auto')) else None,
         'full_spectrum_detected':is_mixed,
         'nozzle_diameter_mm':config.get('nozzle_diameter','').split(',')[0].strip(' \"') or None,
