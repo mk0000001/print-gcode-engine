@@ -38,7 +38,7 @@ def scan(raw,total,progress=None,cancelled=None):
     absolute_xyz=True;absolute_e=True;scale=D(1);lines=0;layers=0;header_layers=None;max_z=None
     duration=None;model_time=None;grams=None;mass_values=[];warnings=[];sources={};config={};feature=None
     stealth_start=False
-    reported=0;next_check=0;direction=[0.0,0.0,0.0];road_length=0.0
+    reported=0;next_check=0;direction=[0.0,0.0,0.0];road_length=0.0;support_road_length=0.0
     plane='G17';absolute_center=False;arc_count=0;arc_excluded=0
     process=ProcessMetrics()
     layer_volume={};section_profile_limited=False
@@ -166,6 +166,9 @@ def scan(raw,total,progress=None,cancelled=None):
                         road_length+=length
                         for i in range(3):direction[i]+=vector[i]*vector[i]/length
                         process.deposit(length,float(deposited),tool)
+                elif feature in ('support','support interface') and code in ('G0','G1'):
+                    vector=[float(xyz[a]-before[a]) for a in 'XYZ'];length=math.sqrt(sum(v*v for v in vector))
+                    if length>0:support_road_length+=length
                 elif feature not in ('support','support interface','brim','skirt') and arc:
                     road_length+=arc['length']
                     for i in range(3):direction[i]+=arc['moments'][i]
@@ -175,6 +178,7 @@ def scan(raw,total,progress=None,cancelled=None):
     if duration is None:warnings.append('PRINT_TIME_NOT_AVAILABLE')
     if grams is None:warnings.append('FILAMENT_MASS_NOT_AVAILABLE')
     if section_profile_limited:warnings.append('LAYER_VOLUME_PROFILE_LIMITED_TO_20000_HEIGHTS')
+    support_ratio=support_road_length/(road_length+support_road_length) if road_length+support_road_length else None
     dimensions=[plain(hi-lo) if lo is not None else None for lo,hi in bounds.values()]
     sources['dimensions_mm']='EXTRUSION_TOOLPATH_ENVELOPE_REQUIRES_REVIEW'
     types=[s.strip(' \"').upper() for s in re.split(r'[,;]',config.get('filament_type',''))]
@@ -223,6 +227,10 @@ def scan(raw,total,progress=None,cancelled=None):
         'multicolor_system':'VORTEK' if detected_printer in ('H2C','H2D') and ('multi_material' in config.get('single_extruder_multi_material','').lower() or config.get('filament_map_mode','').lower().startswith('auto')) else None,
         'full_spectrum_detected':is_mixed,
         'nozzle_diameter_mm':config.get('nozzle_diameter','').split(',')[0].strip(' \"') or None,
+        'support_risk':{'support_road_length_mm':round(support_road_length,3),'model_road_length_mm':round(road_length,3),
+            'support_ratio':round(support_ratio,6) if support_ratio is not None else None,
+            'tier':'HIGH' if support_ratio is not None and support_ratio>.35 else 'MEDIUM' if support_road_length else 'LOW',
+            'basis':'GCODE_FEATURE_SUPPORT_PATH_LENGTH_RATIO','failure_probability':None},
         'orientation':{'build_axis':'Z','road_direction_weights_xyz':[round(v/road_length,6) for v in direction] if road_length else None,
             'sampled_road_length_mm':round(road_length,3),'method':'LINE_AND_ANALYTIC_ARC_TANGENT_SECOND_MOMENT',
             'arc_count':arc_count,'excluded_arc_count':arc_excluded,'arc_excluded':arc_excluded>0}}
