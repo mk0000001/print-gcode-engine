@@ -41,6 +41,7 @@ def scan(raw,total,progress=None,cancelled=None):
     reported=0;next_check=0;direction=[0.0,0.0,0.0];road_length=0.0
     plane='G17';absolute_center=False;arc_count=0;arc_excluded=0
     process=ProcessMetrics()
+    layer_volume={};section_profile_limited=False
     while True:
         if lines%1024==0 and time.monotonic()>=next_check:
             if cancelled and cancelled():raise RuntimeError('ANALYSIS_CANCELLED')
@@ -79,7 +80,7 @@ def scan(raw,total,progress=None,cancelled=None):
             match=re.match(r';\s*max_z_height\s*:\s*('+NUMBER+r')',text,re.I)
             if match:max_z=D(match[1])
             if re.match(r';\s*(?:LAYER:|LAYER_CHANGE\b|CHANGE_LAYER\b)',text,re.I):layers+=1
-            if lower.startswith('; feature:'):feature=lower.split(':',1)[1].strip()
+            if lower.startswith('; feature:') or lower.startswith(';type:'):feature=lower.split(':',1)[1].strip()
             match=SETTINGS.match(text)
             if match:
                 config[match[1].lower()]=match[2]
@@ -145,6 +146,13 @@ def scan(raw,total,progress=None,cancelled=None):
                     arc_excluded+=1
                     if 'ARC_GEOMETRY_INVALID_OR_UNSUPPORTED' not in warnings:warnings.append('ARC_GEOMETRY_INVALID_OR_UNSUPPORTED')
             if deposited>0 and feature not in ('custom','prime tower','wipe tower'):
+                if feature not in ('support','support interface','brim','skirt','prime tower','wipe tower') and xyz['Z']>=0:
+                    if 0<=tool<len(process.diameters) and process.diameters[tool]>0:
+                        level=round(float(xyz['Z']),3)
+                        if level in layer_volume or len(layer_volume)<20000:
+                            diameter=process.diameters[tool]
+                            layer_volume[level]=layer_volume.get(level,0.0)+float(deposited)*math.pi*(diameter/2)**2
+                        else:section_profile_limited=True
                 for axis in 'XYZ':
                     bounds[axis][0]=xyz[axis] if bounds[axis][0] is None else min(bounds[axis][0],xyz[axis],before[axis])
                     bounds[axis][1]=xyz[axis] if bounds[axis][1] is None else max(bounds[axis][1],xyz[axis],before[axis])
@@ -166,6 +174,7 @@ def scan(raw,total,progress=None,cancelled=None):
     if duration is None and model_time is not None:duration=model_time;sources['duration_seconds']='GCODE_MODEL_TIME_ONLY'
     if duration is None:warnings.append('PRINT_TIME_NOT_AVAILABLE')
     if grams is None:warnings.append('FILAMENT_MASS_NOT_AVAILABLE')
+    if section_profile_limited:warnings.append('LAYER_VOLUME_PROFILE_LIMITED_TO_20000_HEIGHTS')
     dimensions=[plain(hi-lo) if lo is not None else None for lo,hi in bounds.values()]
     sources['dimensions_mm']='EXTRUSION_TOOLPATH_ENVELOPE_REQUIRES_REVIEW'
     types=[s.strip(' \"').upper() for s in re.split(r'[,;]',config.get('filament_type',''))]
@@ -204,6 +213,9 @@ def scan(raw,total,progress=None,cancelled=None):
         'tool_ids':actual,'ignored_tool_control_commands':ignored,'layers':header_layers or layers,'observed_layer_markers':layers,
         'max_z_height_mm':plain(max_z),'warnings':warnings,'metric_sources':sources,'trust':'EXTERNAL_UNTRUSTED','lines':lines,
         'configuration':config,'material_usage':usage,'detected_materials':detected,'process_metrics':process.result(),
+        'layer_volume_profile':{'basis':'POSITIVE_MODEL_EXTRUSION_VOLUME_BY_DEPOSITION_Z','unit':'mm3',
+            'z_quantization_mm':0.001,'incomplete':section_profile_limited,
+            'layers':[{'z_mm':z,'volume_mm3':round(volume,6)} for z,volume in sorted(layer_volume.items())]},
         'normal_output_color_count':len({u['color'] for u in usage if u['color']}) or None,
         'printer':detected_printer,'toolchanger_system':'STEALTHCHANGER' if detected_printer=='STEALTH' else None,
         'multicolor_system':'VORTEK' if detected_printer in ('H2C','H2D') and ('multi_material' in config.get('single_extruder_multi_material','').lower() or config.get('filament_map_mode','').lower().startswith('auto')) else None,
