@@ -47,6 +47,8 @@ def scan(raw,total,progress=None,cancelled=None):
     duration=None;model_time=None;grams=None;mass_values=[];warnings=[];sources={};config={};feature=None
     stealth_start=False
     reported=0;next_check=0;direction=[0.0,0.0,0.0];road_length=0.0;support_road_length=0.0
+    bridge_road_length=0.0;overhang_road_length=0.0;brim_road_length=0.0
+    first_model_z=None;first_model_bounds={axis:[None,None] for axis in 'XY'}
     plane='G17';absolute_center=False;arc_count=0;arc_excluded=0
     process=ProcessMetrics()
     layer_volume={};section_profile_limited=False
@@ -153,8 +155,11 @@ def scan(raw,total,progress=None,cancelled=None):
                 except ValueError:
                     arc_excluded+=1
                     if 'ARC_GEOMETRY_INVALID_OR_UNSUPPORTED' not in warnings:warnings.append('ARC_GEOMETRY_INVALID_OR_UNSUPPORTED')
-            if deposited>0 and feature not in ('custom','prime tower','wipe tower'):
-                if feature not in ('support','support interface','brim','skirt','prime tower','wipe tower') and xyz['Z']>=0:
+            feature_name=feature or ''
+            support_feature=feature_name.startswith('support')
+            auxiliary_feature=feature_name in ('brim','skirt')
+            if deposited>0 and feature_name not in ('custom','prime tower','wipe tower'):
+                if not support_feature and not auxiliary_feature and xyz['Z']>=0:
                     if 0<=tool<len(process.diameters) and process.diameters[tool]>0:
                         level=round(float(xyz['Z']),3)
                         if level in layer_volume or len(layer_volume)<20000:
@@ -168,17 +173,30 @@ def scan(raw,total,progress=None,cancelled=None):
                         lo,hi=arc['bounds'][axis]
                         bounds[axis][0]=min(bounds[axis][0],D(str(round(lo,9))))
                         bounds[axis][1]=max(bounds[axis][1],D(str(round(hi,9))))
-                if feature not in ('support','support interface','brim','skirt') and code in ('G0','G1'):
+                if not support_feature and not auxiliary_feature and code in ('G0','G1'):
                     vector=[float(xyz[a]-before[a]) for a in 'XYZ'];length=math.sqrt(sum(v*v for v in vector))
                     if length>0:
                         road_length+=length
+                        if 'bridge' in feature_name:bridge_road_length+=length
+                        if 'overhang' in feature_name:overhang_road_length+=length
+                        if first_model_z is None or xyz['Z']<first_model_z:
+                            first_model_z=xyz['Z'];first_model_bounds={axis:[None,None] for axis in 'XY'}
+                        if xyz['Z']==first_model_z:
+                            for axis in 'XY':
+                                lo,hi=first_model_bounds[axis]
+                                first_model_bounds[axis]=[min(before[axis],xyz[axis]) if lo is None else min(lo,before[axis],xyz[axis]),max(before[axis],xyz[axis]) if hi is None else max(hi,before[axis],xyz[axis])]
                         for i in range(3):direction[i]+=vector[i]*vector[i]/length
                         process.deposit(length,float(deposited),tool)
-                elif feature in ('support','support interface') and code in ('G0','G1'):
+                elif support_feature and code in ('G0','G1'):
                     vector=[float(xyz[a]-before[a]) for a in 'XYZ'];length=math.sqrt(sum(v*v for v in vector))
                     if length>0:support_road_length+=length
-                elif feature not in ('support','support interface','brim','skirt') and arc:
+                elif feature_name=='brim' and code in ('G0','G1'):
+                    vector=[float(xyz[a]-before[a]) for a in 'XYZ'];length=math.sqrt(sum(v*v for v in vector))
+                    if length>0:brim_road_length+=length
+                elif not support_feature and not auxiliary_feature and arc:
                     road_length+=arc['length']
+                    if 'bridge' in feature_name:bridge_road_length+=arc['length']
+                    if 'overhang' in feature_name:overhang_road_length+=arc['length']
                     for i in range(3):direction[i]+=arc['moments'][i]
                     process.deposit(arc['length'],float(deposited),tool)
     if progress:progress({'bytes_processed':total,'total_bytes':total,'lines':lines})
@@ -187,6 +205,10 @@ def scan(raw,total,progress=None,cancelled=None):
     if grams is None:warnings.append('FILAMENT_MASS_NOT_AVAILABLE')
     if section_profile_limited:warnings.append('LAYER_VOLUME_PROFILE_LIMITED_TO_20000_HEIGHTS')
     support_ratio=support_road_length/(road_length+support_road_length) if road_length+support_road_length else None
+    difficult_ratio=(support_road_length+bridge_road_length+overhang_road_length)/(road_length+support_road_length) if road_length+support_road_length else None
+    first_sizes=[float(hi-lo) for lo,hi in first_model_bounds.values() if lo is not None and hi is not None and hi>lo]
+    slenderness=float(max_z)/min(first_sizes) if max_z is not None and len(first_sizes)==2 and min(first_sizes)>0 else None
+    risk_tier='HIGH' if (support_ratio is not None and support_ratio>.35) or (difficult_ratio is not None and difficult_ratio>.15) or (slenderness is not None and slenderness>5 and not brim_road_length) else 'MEDIUM' if support_road_length or bridge_road_length or overhang_road_length or (slenderness is not None and slenderness>3) else 'LOW'
     dimensions=[plain(hi-lo) if lo is not None else None for lo,hi in bounds.values()]
     sources['dimensions_mm']='EXTRUSION_TOOLPATH_ENVELOPE_REQUIRES_REVIEW'
     types=[s.strip(' \"').upper() for s in re.split(r'[,;]',config.get('filament_type',''))]
@@ -236,9 +258,12 @@ def scan(raw,total,progress=None,cancelled=None):
         'full_spectrum_detected':is_mixed,
         'nozzle_diameter_mm':config.get('nozzle_diameter','').split(',')[0].strip(' \"') or None,
         'support_risk':{'support_road_length_mm':round(support_road_length,3),'model_road_length_mm':round(road_length,3),
+            'bridge_road_length_mm':round(bridge_road_length,3),'overhang_road_length_mm':round(overhang_road_length,3),'brim_road_length_mm':round(brim_road_length,3),
             'support_ratio':round(support_ratio,6) if support_ratio is not None else None,
-            'tier':'HIGH' if support_ratio is not None and support_ratio>.35 else 'MEDIUM' if support_road_length else 'LOW',
-            'basis':'GCODE_FEATURE_SUPPORT_PATH_LENGTH_RATIO','failure_probability':None},
+            'difficult_road_ratio':round(difficult_ratio,6) if difficult_ratio is not None else None,
+            'first_layer_footprint_bbox_mm':first_sizes if len(first_sizes)==2 else None,
+            'height_to_minimum_footprint_width':round(slenderness,3) if slenderness is not None else None,
+            'tier':risk_tier,'basis':'GCODE_FEATURE_PATH_RATIOS_AND_FIRST_LAYER_FOOTPRINT_BBOX_HEURISTIC','failure_probability':None},
         'orientation':{'build_axis':'Z','road_direction_weights_xyz':[round(v/road_length,6) for v in direction] if road_length else None,
             'sampled_road_length_mm':round(road_length,3),'method':'LINE_AND_ANALYTIC_ARC_TANGENT_SECOND_MOMENT',
             'arc_count':arc_count,'excluded_arc_count':arc_excluded,'arc_excluded':arc_excluded>0}}
