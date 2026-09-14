@@ -40,7 +40,7 @@ def analyze(path,progress=None,cancelled=None):
         ctx.prec=50
         with path.open('rb') as stream: return scan(stream,path.stat().st_size,progress,cancelled)
 
-def scan(raw,total,progress=None,cancelled=None):
+def scan(raw,total,progress=None,cancelled=None,*,initial_state=None,include_internal=False):
     xyz={a:D(0) for a in 'XYZ'}; offset={a:D(0) for a in 'XYZ'}; bounds={a:[None,None] for a in 'XYZ'}
     epos={0:D(0)}; used={}; retract={}; tools=set(); tool=0; last_tool=None; changes=0; ignored=0
     absolute_xyz=True;absolute_e=True;scale=D(1);lines=0;layers=0;header_layers=None;max_z=None
@@ -53,6 +53,19 @@ def scan(raw,total,progress=None,cancelled=None):
     process=ProcessMetrics()
     layer_volume={};section_profile_limited=False
     last_absolute_motion=None
+    if initial_state:
+        xyz={axis:D(value) for axis,value in initial_state['xyz'].items()}
+        offset={axis:D(value) for axis,value in initial_state['offset'].items()}
+        epos={int(key):D(value) for key,value in initial_state['epos'].items()}
+        retract={int(key):D(value) for key,value in initial_state['retract'].items()}
+        tool=int(initial_state['tool']);last_tool=initial_state['last_tool']
+        absolute_xyz=initial_state['absolute_xyz'];absolute_e=initial_state['absolute_e']
+        scale=D(initial_state['scale']);plane=initial_state['plane'];absolute_center=initial_state['absolute_center']
+        config=initial_state['config'].copy();feature=initial_state['feature']
+        stealth_start=initial_state['stealth_start']
+        process.feed=float(initial_state['feed']);process.diameters=list(initial_state['diameters'])
+        for component,value in initial_state['setpoints'].items():
+            getattr(process,component)['last']=value
     while True:
         if lines%1024==0 and time.monotonic()>=next_check:
             if cancelled and cancelled():raise RuntimeError('ANALYSIS_CANCELLED')
@@ -249,7 +262,7 @@ def scan(raw,total,progress=None,cancelled=None):
     active_ids=set(actual) if 'actual' in locals() else set(used)
     mixed_values=[v.strip() for v in re.split(r'[,;]',mixed)]
     is_mixed=any(i<len(mixed_values) and mixed_values[i].lower() in ('true','1') for i in active_ids)
-    return {'duration_seconds':duration,'model_duration_seconds':model_time,'grams':plain(grams),
+    result={'duration_seconds':duration,'model_duration_seconds':model_time,'grams':plain(grams),
         'filament_mm':[plain(used.get(key,D(0))) for key in actual],'dimensions_mm':dimensions,'toolchanges':changes,
         'tool_ids':actual,'ignored_tool_control_commands':ignored,'layers':header_layers or layers,'observed_layer_markers':layers,
         'max_z_height_mm':plain(max_z),'warnings':warnings,'metric_sources':sources,'trust':'EXTERNAL_UNTRUSTED','lines':lines,
@@ -273,3 +286,14 @@ def scan(raw,total,progress=None,cancelled=None):
         'orientation':{'build_axis':'Z','road_direction_weights_xyz':[round(v/road_length,6) for v in direction] if road_length else None,
             'sampled_road_length_mm':round(road_length,3),'method':'LINE_AND_ANALYTIC_ARC_TANGENT_SECOND_MOMENT',
             'arc_count':arc_count,'excluded_arc_count':arc_excluded,'arc_excluded':arc_excluded>0}}
+    if include_internal:
+        result['_scan_state']={'xyz':xyz.copy(),'offset':offset.copy(),'epos':epos.copy(),
+            'retract':retract.copy(),'tool':tool,'last_tool':last_tool,
+            'absolute_xyz':absolute_xyz,'absolute_e':absolute_e,'scale':scale,
+            'plane':plane,'absolute_center':absolute_center,'config':config.copy(),
+            'feature':feature,'stealth_start':stealth_start,'feed':process.feed,
+            'diameters':list(process.diameters),'setpoints':{
+                component:getattr(process,component)['last'] for component in ('nozzle','bed','chamber')},
+            'deposition_bounds':{axis:tuple(bound) for axis,bound in bounds.items()},
+            'road_direction_moments_xyz':tuple(direction),'road_length_mm':road_length}
+    return result
