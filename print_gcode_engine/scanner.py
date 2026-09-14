@@ -52,6 +52,7 @@ def scan(raw,total,progress=None,cancelled=None):
     plane='G17';absolute_center=False;arc_count=0;arc_excluded=0
     process=ProcessMetrics()
     layer_volume={};section_profile_limited=False
+    last_absolute_motion=None
     while True:
         if lines%1024==0 and time.monotonic()>=next_check:
             if cancelled and cancelled():raise RuntimeError('ANALYSIS_CANCELLED')
@@ -63,6 +64,9 @@ def scan(raw,total,progress=None,cancelled=None):
         lines+=1
         if progress and raw.tell()-reported>=4*1024*1024:
             reported=raw.tell();progress({'bytes_processed':reported,'total_bytes':total,'lines':lines})
+        if absolute_xyz and absolute_e and binary==last_absolute_motion:
+            continue
+        last_absolute_motion=None
         text=binary.decode('utf-8','replace').strip()
         if text.startswith(';'):
             lower=text.lower()
@@ -199,6 +203,8 @@ def scan(raw,total,progress=None,cancelled=None):
                     if 'overhang' in feature_name:overhang_road_length+=arc['length']
                     for i in range(3):direction[i]+=arc['moments'][i]
                     process.deposit(arc['length'],float(deposited),tool)
+            if code in ('G0','G1') and absolute_xyz and absolute_e:
+                last_absolute_motion=binary
     if progress:progress({'bytes_processed':total,'total_bytes':total,'lines':lines})
     if duration is None and model_time is not None:duration=model_time;sources['duration_seconds']='GCODE_MODEL_TIME_ONLY'
     if duration is None:warnings.append('PRINT_TIME_NOT_AVAILABLE')
