@@ -3,8 +3,8 @@ import math
 
 def update_range(current,value):
     if not math.isfinite(value):return
-    current['min']=value if current['min'] is None else min(current['min'],value)
-    current['max']=value if current['max'] is None else max(current['max'],value)
+    if current['min'] is None or value<current['min']:current['min']=value
+    if current['max'] is None or value>current['max']:current['max']=value
     current['last']=value
 
 def empty_range():return {'min':None,'max':None,'last':None}
@@ -13,12 +13,18 @@ class Distribution:
     def __init__(self):
         self.bins=[0.0]*256
         self.maximum=None;self.minimum=None;self.weight=0.0
+        self._last_value=None;self._last_index=0
     def add(self,value,weight):
         if value<=0 or weight<=0 or not math.isfinite(value+weight):return
-        index=min(255,max(0,int(math.log2(value)*8)+128))
+        if value==self._last_value:
+            index=self._last_index
+        else:
+            index=int(math.log2(value)*8)+128
+            index=0 if index<0 else 255 if index>255 else index
+            self._last_value=value;self._last_index=index
         self.bins[index]+=weight;self.weight+=weight
-        self.maximum=value if self.maximum is None else max(self.maximum,value)
-        self.minimum=value if self.minimum is None else min(self.minimum,value)
+        if self.maximum is None or value>self.maximum:self.maximum=value
+        if self.minimum is None or value<self.minimum:self.minimum=value
     def quantile(self,fraction):
         if not self.weight:return None
         total=0.0

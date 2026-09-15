@@ -9,6 +9,8 @@ from .arcs import arc_metrics
 from .process import ProcessMetrics
 
 D=Decimal
+ZERO=D(0)
+NATIVE_SCANNER=__file__.endswith(('.so','.pyd'))
 NUMBER=r'[-+]?(?:\d+(?:\.\d*)?|\.\d+)'
 FIELDS=re.compile(r'([XYZEIJKRF])\s*('+NUMBER+r')')
 LINE_NUMBER=re.compile(r'^N\d+\s*')
@@ -23,6 +25,14 @@ TIME_HEADER=re.compile(r';\s*time\s*:',re.I)
 TIME_VALUE=re.compile(r':\s*(\d+)')
 SETPOINT=re.compile(r'[SR]\s*('+NUMBER+r')')
 MASS_NUMBER=re.compile(NUMBER)
+PRINTER_ALIASES=(
+    ('VORON_2_4','voron 2.4'),('VORON_2_4','voron2.4'),('STEALTH','stealthchanger'),
+    ('H2C','h2c'),('H2D','h2d'),('A1_MINI','a1 mini'),('A1','a1'),
+    ('X1E','x1e'),('X1C','x1 carbon'),('P1S','p1s'),('P1P','p1p'),
+    ('P2S','p2s'),('Q2','q2'),('Q1','q1'),('X_MAX3','x max 3'),
+    ('X_PLUS3','x plus 3'),('K1_MAX','k1 max'),('K1C','k1c'),
+    ('K1','k1'),('K2_PLUS','k2 plus'),('K2','k2'),('MK4S','mk4s'),
+    ('MK4','mk4'),('MK3S_PLUS','mk3s'),('XL','prusa xl'),('MINI_PLUS','mini+'))
 
 def plain(value):
     return None if value is None else format(value.normalize() if value else D('0'),'f')
@@ -41,7 +51,8 @@ def analyze(path,progress=None,cancelled=None):
     if workers>1 and path.stat().st_size>=8*1024*1024:
         from .parallel import analyze_parallel_file, benefits_from_parallel
         with path.open('rb') as stream:sample=stream.read(4*1024*1024)
-        if benefits_from_parallel(sample):return analyze_parallel_file(path,progress,cancelled,workers)
+        if benefits_from_parallel(sample,size_bytes=path.stat().st_size,native=NATIVE_SCANNER):
+            return analyze_parallel_file(path,progress,cancelled,workers)
     with localcontext() as ctx:
         ctx.prec=50
         with path.open('rb') as stream: return scan(stream,path.stat().st_size,progress,cancelled)
@@ -53,13 +64,14 @@ def scan(raw,total,progress=None,cancelled=None,*,initial_state=None,include_int
     duration=None;model_time=None;grams=None;mass_values=[];warnings=[];sources={};config={};feature=None
     stealth_start=False
     total_mass_seen=False
-    reported=0;next_check=0;direction=[0.0,0.0,0.0];road_length=0.0;support_road_length=0.0
+    next_check=0;direction=[0.0,0.0,0.0];road_length=0.0;support_road_length=0.0
     bridge_road_length=0.0;overhang_road_length=0.0;brim_road_length=0.0
     first_model_z=None;first_model_bounds={axis:[None,None] for axis in 'XY'}
     plane='G17';absolute_center=False;arc_count=0;arc_excluded=0
     process=ProcessMetrics()
     layer_volume={};layer_numbers={};layer_number=0;section_profile_limited=False
     last_absolute_motion=None
+    cached_z=None;cached_level=None
     if initial_state:
         layer_number=initial_state.get('layer_number',0)
         xyz={axis:D(value) for axis,value in initial_state['xyz'].items()}
@@ -75,16 +87,17 @@ def scan(raw,total,progress=None,cancelled=None,*,initial_state=None,include_int
         for component,value in initial_state['setpoints'].items():
             getattr(process,component)['last']=value
     while True:
-        if lines%1024==0 and time.monotonic()>=next_check:
-            if cancelled and cancelled():raise RuntimeError('ANALYSIS_CANCELLED')
-            next_check=time.monotonic()+1
+        if lines%1024==0:
+            now=time.monotonic()
+            if now>=next_check:
+                if cancelled and cancelled():raise RuntimeError('ANALYSIS_CANCELLED')
+                next_check=now+.25
+                if progress:progress({'bytes_processed':raw.tell(),'total_bytes':total,'lines':lines})
         binary=raw.readline(1024*1024+1)
         if not binary:break
         if len(binary)>1024*1024:raise ValueError('GCODE_LINE_TOO_LONG')
         if b'\x00' in binary:raise ValueError('BINARY_GCODE_NOT_SUPPORTED')
         lines+=1
-        if progress and raw.tell()-reported>=4*1024*1024:
-            reported=raw.tell();progress({'bytes_processed':reported,'total_bytes':total,'lines':lines})
         if absolute_xyz and absolute_e and binary==last_absolute_motion:
             continue
         last_absolute_motion=None
@@ -160,16 +173,16 @@ def scan(raw,total,progress=None,cancelled=None,*,initial_state=None,include_int
                 if axis=='E':epos[tool]=number
                 elif axis in xyz:offset[axis]=xyz[axis]-number
         elif code in MOTION_CODES:
-            fields=dict(FIELDS.findall(command));delta=D(0);deposited=D(0);before=xyz.copy()
+            fields=dict(FIELDS.findall(command));delta=ZERO;deposited=ZERO;before=xyz.copy()
             if 'F' in fields:process.feed=float(D(fields['F'])*scale)
             if 'E' in fields:
                 value=D(fields['E'])*scale;delta=value-epos[tool] if absolute_e else value
                 epos[tool]=value if absolute_e else epos[tool]+value
-                if delta<0:retract[tool]=retract.get(tool,D(0))-delta
+                if delta<0:retract[tool]=retract.get(tool,ZERO)-delta
                 if delta>0:
-                    recovery=min(retract.get(tool,D(0)),delta);retract[tool]=retract.get(tool,D(0))-recovery
+                    recovery=min(retract.get(tool,ZERO),delta);retract[tool]=retract.get(tool,ZERO)-recovery
                     deposited=delta-recovery
-                    used[tool]=used.get(tool,D(0))+deposited;tools.add(tool)
+                    used[tool]=used.get(tool,ZERO)+deposited;tools.add(tool)
                     if last_tool is None:last_tool=tool
             for axis in 'XYZ':
                 if axis in fields:
@@ -188,7 +201,9 @@ def scan(raw,total,progress=None,cancelled=None,*,initial_state=None,include_int
             if deposited>0 and feature_name not in ('custom','prime tower','wipe tower'):
                 if not support_feature and not auxiliary_feature and xyz['Z']>=0:
                     if 0<=tool<len(process.diameters) and process.diameters[tool]>0:
-                        level=round(float(xyz['Z']),3)
+                        if xyz['Z']!=cached_z:
+                            cached_z=xyz['Z'];cached_level=round(float(cached_z),3)
+                        level=cached_level
                         if level in layer_volume or len(layer_volume)<20000:
                             diameter=process.diameters[tool]
                             layer_volume[level]=layer_volume.get(level,0.0)+float(deposited)*math.pi*(diameter/2)**2
@@ -197,8 +212,15 @@ def scan(raw,total,progress=None,cancelled=None,*,initial_state=None,include_int
                             elif layer_numbers[level]!=number:layer_numbers[level]=None
                         else:section_profile_limited=True
                 for axis in 'XYZ':
-                    bounds[axis][0]=xyz[axis] if bounds[axis][0] is None else min(bounds[axis][0],xyz[axis],before[axis])
-                    bounds[axis][1]=xyz[axis] if bounds[axis][1] is None else max(bounds[axis][1],xyz[axis],before[axis])
+                    bound=bounds[axis];end=xyz[axis];start=before[axis]
+                    if bound[0] is None:bound[0]=end
+                    else:
+                        if end<bound[0]:bound[0]=end
+                        if start<bound[0]:bound[0]=start
+                    if bound[1] is None:bound[1]=end
+                    else:
+                        if end>bound[1]:bound[1]=end
+                        if start>bound[1]:bound[1]=start
                     if arc:
                         lo,hi=arc['bounds'][axis]
                         bounds[axis][0]=min(bounds[axis][0],D(str(round(lo,9))))
@@ -260,19 +282,10 @@ def scan(raw,total,progress=None,cancelled=None,*,initial_state=None,include_int
     # Slicers differ in which setting key they emit. Keep aliases here so a
     # G-code-only upload still gets a deterministic catalog model whenever the
     # slicer left an identifiable token in its header.
-    detected_printer=next((key for key,name in [
-        ('VORON_2_4','voron 2.4'),('VORON_2_4','voron2.4'),
-        ('STEALTH','stealthchanger'),
-        ('H2C','h2c'),('H2D','h2d'),('A1_MINI','a1 mini'),('A1','a1'),
-        ('X1E','x1e'),('X1C','x1 carbon'),('P1S','p1s'),('P1P','p1p'),
-        ('P2S','p2s'),('Q2','q2'),('Q1','q1'),('X_MAX3','x max 3'),
-        ('X_PLUS3','x plus 3'),('K1_MAX','k1 max'),('K1C','k1c'),
-        ('K1','k1'),('K2_PLUS','k2 plus'),('K2','k2'),('MK4S','mk4s'),
-        ('MK4','mk4'),('MK3S_PLUS','mk3s'),('XL','prusa xl'),('MINI_PLUS','mini+')
-    ] if name in model_text),None)
+    detected_printer=next((key for key,name in PRINTER_ALIASES if name in model_text),None)
     if detected_printer is None and stealth_start:detected_printer='STEALTH'
     mixed=config.get('filament_is_mixed','').lower()
-    active_ids=set(actual) if 'actual' in locals() else set(used)
+    active_ids=set(actual)
     mixed_values=[v.strip() for v in re.split(r'[,;]',mixed)]
     is_mixed=any(i<len(mixed_values) and mixed_values[i].lower() in ('true','1') for i in active_ids)
     result={'duration_seconds':duration,'model_duration_seconds':model_time,'grams':plain(grams),

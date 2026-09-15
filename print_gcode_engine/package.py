@@ -7,7 +7,7 @@ from pathlib import Path
 import xml.etree.ElementTree as ET
 from decimal import Decimal, localcontext
 from zipfile import ZipFile
-from .scanner import scan, plain
+from .scanner import scan, plain, NATIVE_SCANNER
 
 def analyze_package(path,progress=None,cancelled=None):
     with ZipFile(path) as archive, localcontext() as ctx:
@@ -33,7 +33,7 @@ def analyze_package(path,progress=None,cancelled=None):
             if workers>1 and scratch and info.file_size>=8*1024*1024:
                 from .parallel import benefits_from_parallel
                 with archive.open(info) as stream:sample=stream.read(4*1024*1024)
-                if not benefits_from_parallel(sample):scratch=None
+                if not benefits_from_parallel(sample,size_bytes=info.file_size,native=NATIVE_SCANNER):scratch=None
             if scratch and workers>1 and info.file_size>=8*1024*1024:
                 Path(scratch).mkdir(parents=True,exist_ok=True)
                 if shutil.disk_usage(scratch).free<info.file_size+64*1024*1024:scratch=None

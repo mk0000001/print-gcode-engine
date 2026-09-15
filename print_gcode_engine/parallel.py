@@ -11,24 +11,28 @@ from .merge import merge_chunks
 from .scanner import scan
 
 
-def benefits_from_parallel(sample):
-    """Bounded workload heuristic from VM benchmarks; linear files stay serial."""
+def benefits_from_parallel(sample,*,size_bytes=0,native=False):
+    """Large dense native workloads and arc-heavy files benefit in VM tests."""
     commands=re.finditer(rb'(?m)^\s*(?:N\d+\s*)?G([0123])(?=\s|[XYZIJKREF])',sample)
     total=arcs=0
     for command in commands:
         total+=1
         if command[1] in (b'2',b'3'):arcs+=1
-    return total>=100 and arcs/total>=.08
+    if total<100:return False
+    if native and size_bytes>=128*1024**2 and total>=len(sample)/200:return True
+    return arcs/total>=.08
 
 
 class BoundedReader:
     def __init__(self,stream,start,end):
-        self.stream=stream;self.start=start;self.end=end;stream.seek(start)
-    def tell(self):return self.stream.tell()-self.start
+        self.stream=stream;self.start=start;self.end=end;self.position=start;stream.seek(start)
+    def tell(self):return self.position-self.start
     def readline(self,limit=-1):
-        remaining=self.end-self.stream.tell()
+        remaining=self.end-self.position
         if remaining<=0:return b''
-        return self.stream.readline(min(remaining,limit) if limit>=0 else remaining)
+        data=self.stream.readline(min(remaining,limit) if limit>=0 else remaining)
+        self.position+=len(data)
+        return data
 
 
 def _piece(path,start,end,state,index,event,updates):

@@ -25,7 +25,8 @@ def _segment_checkpoints(path, workers=4, cancelled=None, progress=None):
     path=Path(path)
     if workers<2 or workers>8:raise ValueError('INVALID_WORKER_COUNT')
     size=path.stat().st_size
-    if path.suffix.lower() not in ('.gcode','.gco','.gc') or size<1024:return None
+    # Storage uses opaque .bin names; analyze() already dispatches by content.
+    if size<1024:return None
     # Avoid a full extra modal pass for unlayered files. A very large first
     # layer may conservatively choose serial analysis with this bounded probe.
     with path.open('rb') as stream:head=stream.read(min(size,4*1024*1024))
@@ -50,15 +51,17 @@ def _segment_checkpoints(path, workers=4, cancelled=None, progress=None):
             'diameters':list(diameters),'setpoints':setpoints.copy(),'layer_number':layer_number}
 
     states.append(snapshot())
+    next_position=0
     with path.open('rb') as stream:
         while True:
             if lines%4096==0 and time.monotonic()>=next_check:
-                next_check=time.monotonic()+.5
+                next_check=time.monotonic()+.25
                 if cancelled and cancelled():raise RuntimeError('ANALYSIS_CANCELLED')
                 if progress:progress({'bytes_processed':stream.tell(),'total_bytes':size,'lines':lines})
-            position=stream.tell()
+            position=next_position
             binary=stream.readline(1024*1024+1)
             if not binary:break
+            next_position+=len(binary)
             lines+=1
             if len(binary)>1024*1024:raise ValueError('GCODE_LINE_TOO_LONG')
             if b'\x00' in binary:raise ValueError('BINARY_GCODE_NOT_SUPPORTED')
@@ -66,6 +69,9 @@ def _segment_checkpoints(path, workers=4, cancelled=None, progress=None):
             if text.startswith(';'):
                 if len(cuts)<workers and position>=size*len(cuts)/workers and LAYER_MARKER.match(text):
                     cuts.append(position);states.append(snapshot())
+                    # The final chunk needs its starting modal state only.
+                    # Its body (including validation) is handled by the worker.
+                    if len(cuts)==workers:break
                 if LAYER_MARKER.match(text):layer_number+=1
                 lower=text.lower()
                 if 'stealthchanger' in lower and ('print_start' in lower or 'toolchanger' in lower or 'tool change' in lower):stealth_start=True
