@@ -1,7 +1,4 @@
-"""Lightweight modal checkpoints for future layer-aligned parallel scans.
-
-This module does not merge chunk outputs or enable a parallel quote path.
-"""
+"""Modal checkpoints for layer-aligned parallel scans, with lazy absolute coordinates."""
 from decimal import Decimal, localcontext
 from pathlib import Path
 import time
@@ -39,10 +36,21 @@ def _segment_checkpoints(path, workers=4, cancelled=None, progress=None):
     absolute_xyz=True;absolute_e=True;scale=Decimal(1)
     plane='G17';absolute_center=False;config={};feature=None;stealth_start=False
     feed=0.0;diameters=[];setpoints={'nozzle':None,'bed':None,'chamber':None}
+    pending_xyz={};pending_feed=None
     cuts=[0];states=[]
     lines=0;next_check=0;layer_number=0
 
+    def flush_pending():
+        nonlocal feed,pending_feed
+        # Absolute coordinates are overwritten by subsequent moves. Resolve only
+        # at boundaries or before a command that needs the current numeric state.
+        for axis,value in pending_xyz.items():xyz[axis]=Decimal(value)*scale+offset[axis]
+        pending_xyz.clear()
+        if pending_feed is not None:
+            feed=float(Decimal(pending_feed)*scale);pending_feed=None
+
     def snapshot():
+        flush_pending()
         return {'xyz':xyz.copy(),'offset':offset.copy(),'epos':epos.copy(),
             'retract':retract.copy(),'tool':tool,'last_tool':last_tool,
             'absolute_xyz':absolute_xyz,'absolute_e':absolute_e,'scale':scale,
@@ -89,11 +97,11 @@ def _segment_checkpoints(path, workers=4, cancelled=None, progress=None):
             if not match:continue
             code=match[1]
             if code=='G90':absolute_xyz=True
-            elif code=='G91':absolute_xyz=False
+            elif code=='G91':flush_pending();absolute_xyz=False
             elif code=='M82':absolute_e=True
             elif code=='M83':absolute_e=False
-            elif code=='G20':scale=Decimal('25.4')
-            elif code=='G21':scale=Decimal(1)
+            elif code=='G20':flush_pending();scale=Decimal('25.4')
+            elif code=='G21':flush_pending();scale=Decimal(1)
             elif code in ('G17','G18','G19'):plane=code
             elif code=='G90.1':absolute_center=True
             elif code=='G91.1':absolute_center=False
@@ -107,26 +115,27 @@ def _segment_checkpoints(path, workers=4, cancelled=None, progress=None):
                 if key>=255:continue
                 last_tool=key;tool=key;epos.setdefault(key,zero)
             elif code=='G92':
+                flush_pending()
                 for axis,value in FIELDS.findall(command):
                     number=Decimal(value)*scale
                     if axis=='E':epos[tool]=number
                     elif axis in xyz:offset[axis]=xyz[axis]-number
             elif code in MOTION_CODES:
                 fields=dict(FIELDS.findall(command))
-                if 'F' in fields:feed=float(Decimal(fields['F'])*scale)
+                if 'F' in fields:pending_feed=fields['F']
                 if 'E' in fields:
                     value=Decimal(fields['E'])*scale
                     delta=value-epos[tool] if absolute_e else value
                     epos[tool]=value if absolute_e else epos[tool]+value
                     if delta<0:retract[tool]=retract.get(tool,zero)-delta
                     elif delta>0:
-                        recovery=min(retract.get(tool,zero),delta)
-                        retract[tool]=retract.get(tool,zero)-recovery
+                        debt=retract.get(tool,zero)
+                        retract[tool]=debt-min(debt,delta) if debt else debt
                         if last_tool is None:last_tool=tool
                 for axis in 'XYZ':
                     if axis in fields:
-                        value=Decimal(fields[axis])*scale
-                        xyz[axis]=value+offset[axis] if absolute_xyz else xyz[axis]+value
+                        if absolute_xyz:pending_xyz[axis]=fields[axis]
+                        else:xyz[axis]+=Decimal(fields[axis])*scale
     if len(cuts)<2:return None
     cuts.append(size)
     return [(cuts[i],cuts[i+1],states[i]) for i in range(len(states))]

@@ -1,5 +1,7 @@
 # Print G-code Engine
 
+The modal checkpoint pass defers absolute XYZ and feed conversion until a chunk boundary or a relative-coordinate, origin-reset, or unit-change command needs numeric state. Superseded absolute positions are not repeatedly converted. Decimal50 state precision, relative movement, unit scaling, tool state and retraction debt remain exact; there is no reduced-precision fast path. Checkpoint states are regression-tested against complete prefix scans for2/4/6 partitions.
+
 `scan(..., motion_callback=callback)` optionally streams visual motions as `(layer_number, before_xyz, after_xyz, feature, tool, deposited_mm, arc)`. The callback shares the analyzer's modal coordinates and retraction accounting; copy coordinates if retaining them beyond the call. Arc geometry is included only for observers. Stationary unretraction does not create a model-layer area entry, including tiny residual extrusion before a support feature change.
 
 Optional native build (CPython with a C compiler): install `Cython==3.1.3 setuptools==80.9.0 wheel==0.45.1`, then run `python build_native.py build_ext --inplace -j 2` from this repository. Scanner, process histograms, arc geometry and checkpoint passes compile ahead of time. The `.py` files remain the portable fallback. Decimal arithmetic and analysis rules are preserved; no fast-math flags or reduced-precision coordinates are used. Compiled extensions must be rebuilt for the target Python version and platform.
