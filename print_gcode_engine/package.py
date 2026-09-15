@@ -31,6 +31,10 @@ def analyze_package(path,progress=None,cancelled=None):
             workers=max(1,min(8,int(os.getenv('GCODE_PARALLEL_WORKERS','1'))))
             scratch=os.getenv('GCODE_SCRATCH_DIR')
             if workers>1 and scratch and info.file_size>=8*1024*1024:
+                from .parallel import benefits_from_parallel
+                with archive.open(info) as stream:sample=stream.read(4*1024*1024)
+                if not benefits_from_parallel(sample):scratch=None
+            if scratch and workers>1 and info.file_size>=8*1024*1024:
                 Path(scratch).mkdir(parents=True,exist_ok=True)
                 if shutil.disk_usage(scratch).free<info.file_size+64*1024*1024:scratch=None
             else:scratch=None

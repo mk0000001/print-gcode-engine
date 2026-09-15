@@ -4,10 +4,21 @@ from decimal import localcontext
 from pathlib import Path
 from queue import Empty
 import multiprocessing
+import re
 
 from .checkpoint import segment_checkpoints
 from .merge import merge_chunks
 from .scanner import scan
+
+
+def benefits_from_parallel(sample):
+    """Bounded workload heuristic from VM benchmarks; linear files stay serial."""
+    commands=re.finditer(rb'(?m)^\s*(?:N\d+\s*)?G([0123])(?=\s|[XYZIJKREF])',sample)
+    total=arcs=0
+    for command in commands:
+        total+=1
+        if command[1] in (b'2',b'3'):arcs+=1
+    return total>=100 and arcs/total>=.08
 
 
 class BoundedReader:

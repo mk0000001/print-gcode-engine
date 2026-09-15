@@ -39,8 +39,9 @@ def analyze(path,progress=None,cancelled=None):
         return analyze_package(path,progress,cancelled)
     workers=max(1,min(8,int(os.getenv('GCODE_PARALLEL_WORKERS','1'))))
     if workers>1 and path.stat().st_size>=8*1024*1024:
-        from .parallel import analyze_parallel_file
-        return analyze_parallel_file(path,progress,cancelled,workers)
+        from .parallel import analyze_parallel_file, benefits_from_parallel
+        with path.open('rb') as stream:sample=stream.read(4*1024*1024)
+        if benefits_from_parallel(sample):return analyze_parallel_file(path,progress,cancelled,workers)
     with localcontext() as ctx:
         ctx.prec=50
         with path.open('rb') as stream: return scan(stream,path.stat().st_size,progress,cancelled)

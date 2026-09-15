@@ -2,11 +2,14 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from print_gcode_engine.parallel import analyze_parallel_file
+from print_gcode_engine.parallel import analyze_parallel_file, benefits_from_parallel
 from print_gcode_engine.analyzer import analyze
 
 
 class ParallelRuntimeTests(unittest.TestCase):
+    def test_adaptive_gate_keeps_linear_workloads_serial(self):
+        self.assertFalse(benefits_from_parallel(b'G1 X1 Y1 E1\n'*200))
+        self.assertTrue(benefits_from_parallel(b'G2 X1 Y1 I1 J0 E1\n'*200))
     def fixture(self,path):
         lines=['; filament_type = PLA','M83','G90']
         for i in range(80):lines.extend((';LAYER_CHANGE',f'G1 X{i+1} Y0 Z0 E1 F60'))
