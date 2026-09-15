@@ -57,7 +57,7 @@ def analyze(path,progress=None,cancelled=None):
         ctx.prec=50
         with path.open('rb') as stream: return scan(stream,path.stat().st_size,progress,cancelled)
 
-def scan(raw,total,progress=None,cancelled=None,*,initial_state=None,include_internal=False):
+def scan(raw,total,progress=None,cancelled=None,*,initial_state=None,include_internal=False,motion_callback=None):
     xyz={a:D(0) for a in 'XYZ'}; offset={a:D(0) for a in 'XYZ'}; bounds={a:[None,None] for a in 'XYZ'}
     epos={0:D(0)}; used={}; retract={}; tools=set(); tool=0; last_tool=None; changes=0; ignored=0
     absolute_xyz=True;absolute_e=True;scale=D(1);lines=0;layers=0;header_layers=None;max_z=None
@@ -190,7 +190,7 @@ def scan(raw,total,progress=None,cancelled=None,*,initial_state=None,include_int
             arc=None
             if code in ('G2','G3'):
                 try:
-                    arc=arc_metrics(before,xyz,fields,code=='G2',plane,scale,absolute_center,offset)
+                    arc=arc_metrics(before,xyz,fields,code=='G2',plane,scale,absolute_center,offset,include_geometry=motion_callback is not None)
                     arc_count+=1
                 except ValueError:
                     arc_excluded+=1
@@ -198,7 +198,10 @@ def scan(raw,total,progress=None,cancelled=None,*,initial_state=None,include_int
             feature_name=feature or ''
             support_feature=feature_name.startswith('support')
             auxiliary_feature=feature_name in ('brim','skirt')
-            if deposited>0 and feature_name not in ('custom','prime tower','wipe tower'):
+            has_path=arc is not None or (code in ('G0','G1') and xyz!=before)
+            if motion_callback is not None and has_path:
+                motion_callback(layer_number,before,xyz,feature_name,tool,deposited,arc)
+            if deposited>0 and has_path and feature_name not in ('custom','prime tower','wipe tower'):
                 if not support_feature and not auxiliary_feature and xyz['Z']>=0:
                     if 0<=tool<len(process.diameters) and process.diameters[tool]>0:
                         if xyz['Z']!=cached_z:

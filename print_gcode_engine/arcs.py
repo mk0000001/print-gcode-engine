@@ -10,7 +10,7 @@ def _sweep(start,end,clockwise):
     if clockwise:return delta-TAU if delta>1e-12 else -TAU
     return delta if delta>1e-12 else TAU
 
-def arc_metrics(start,end,fields,clockwise,plane='G17',scale=1,absolute_center=False,offsets=None):
+def arc_metrics(start,end,fields,clockwise,plane='G17',scale=1,absolute_center=False,offsets=None,*,include_geometry=False):
     u,v,w=PLANES[plane];offsets=offsets or {axis:0 for axis in 'XYZ'}
     p={a:float(start[a]) for a in 'XYZ'};q={a:float(end[a]) for a in 'XYZ'}
     params={k:float(value)*float(scale) for k,value in fields.items() if k in 'IJKR'}
@@ -53,4 +53,6 @@ def arc_metrics(start,end,fields,clockwise,plane='G17',scale=1,absolute_center=F
         if distance<=angle+1e-9:
             for axis,value in ((u,cx+radius*math.cos(cardinal)),(v,cy+radius*math.sin(cardinal))):
                 bounds[axis][0]=min(bounds[axis][0],value);bounds[axis][1]=max(bounds[axis][1],value)
-    return {'length':length,'moments':[moments[a] for a in 'XYZ'],'bounds':bounds}
+    result={'length':length,'moments':[moments[a] for a in 'XYZ'],'bounds':bounds}
+    if include_geometry:result['geometry']={'axes':(u,v,w),'center':(cx,cy),'radius':radius,'start_angle':a,'sweep':sweep,'start_w':p[w],'end_w':q[w]}
+    return result
