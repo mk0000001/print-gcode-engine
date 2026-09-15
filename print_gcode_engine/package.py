@@ -27,7 +27,10 @@ def analyze_package(path,progress=None,cancelled=None):
         if xml and (b'<!DOCTYPE' in xml.upper() or b'<!ENTITY' in xml.upper()):raise ValueError('UNSAFE_XML_METADATA')
         root=ET.fromstring(xml) if xml else None
         results=[]
-        for info in gcodes:
+        for plate_index,info in enumerate(gcodes):
+            def plate_progress(value):
+                if progress:progress({**value,'eta_context':info.filename,
+                    'eta_final_phase':value.get('eta_final_phase',value.get('phase') not in ('CHECKPOINT','EXTRACT')) and plate_index==len(gcodes)-1})
             workers=max(1,min(8,int(os.getenv('GCODE_PARALLEL_WORKERS','1'))))
             scratch=os.getenv('GCODE_SCRATCH_DIR')
             if workers>1 and scratch and info.file_size>=8*1024*1024:
@@ -48,12 +51,13 @@ def analyze_package(path,progress=None,cancelled=None):
                             block=stream.read(1024*1024)
                             if not block:break
                             output.write(block);written+=len(block)
-                            if progress:progress({'bytes_processed':int(written*.1),'total_bytes':info.file_size,'lines':0,'phase':'EXTRACT'})
+                            plate_progress({'bytes_processed':int(written*.1),'total_bytes':info.file_size,'lines':0,'phase':'EXTRACT',
+                                'phase_bytes_processed':written,'phase_total_bytes':info.file_size,'eta_final_phase':False})
                     def mapped(value):
-                        if progress:progress({**value,'bytes_processed':int(info.file_size*.1+value['bytes_processed']*.9)})
+                        plate_progress({**value,'bytes_processed':int(info.file_size*.1+value['bytes_processed']*.9)})
                     result=analyze_parallel_file(extracted,mapped,cancelled,workers)
             else:
-                with archive.open(info) as stream:result=scan(stream,info.file_size,progress,cancelled)
+                with archive.open(info) as stream:result=scan(stream,info.file_size,plate_progress if progress else None,cancelled)
             match=re.search(r'plate_(\d+)\.gcode$',info.filename,re.I);plate_id=match[1] if match else None
             result.update({'plate_id':plate_id,'archive_member':info.filename,'uncompressed_bytes':info.file_size})
             plate=None

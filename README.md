@@ -6,6 +6,8 @@ Adaptive parallel mode: set `GCODE_PARALLEL_WORKERS=4` to opt in for files of at
 
 Progress is time-based (approximately 250 ms from the scanner/checkpoint loop), independent of crossing a byte threshold. Progress consumers should avoid blocking the analyzer; final completion always reports the full byte count.
 
+Parallel and archive progress also expose `phase_bytes_processed`, `phase_total_bytes`, and `eta_final_phase` where needed. Use these for remaining-time estimates rather than the weighted display percentage. Preparation and nonfinal plates must not be presented as the end of the entire job; `eta_context` distinguishes archive members.
+
 Standalone bounded-memory G-code and sliced-3MF analyzer. `print_gcode_engine.analyzer.analyze(path)` returns slicer metadata, active material usage, process metrics, and toolpath orientation. Supports large sequential streams and ZIP member streaming. External G-code remains untrusted for production.
 
 StealthChanger/Orca tool profiles are recognized from `printer_settings_id` and Klipper start comments; sparse T tool IDs are mapped to profile ordinals when only active profiles are listed. This package does not make strength or pricing decisions.

@@ -46,7 +46,8 @@ def _piece(path,start,end,state,index,event,updates):
 def analyze_parallel_file(path,progress=None,cancelled=None,workers=4):
     path=Path(path);size=path.stat().st_size
     def checkpoint_progress(value):
-        if progress:progress({'bytes_processed':int(value['bytes_processed']*.25),'total_bytes':size,'lines':value['lines'],'phase':'CHECKPOINT'})
+        if progress:progress({'bytes_processed':int(value['bytes_processed']*.25),'total_bytes':size,'lines':value['lines'],'phase':'CHECKPOINT',
+                              'phase_bytes_processed':value['bytes_processed'],'phase_total_bytes':int(size*(workers-1)/workers),'eta_final_phase':False})
     segments=segment_checkpoints(path,workers,cancelled=cancelled,progress=checkpoint_progress)
     if not segments:
         with localcontext() as context:
@@ -69,7 +70,8 @@ def analyze_parallel_file(path,progress=None,cancelled=None,workers=4):
                     if progress:
                         processed=sum(row[0] for row in counts.values())
                         progress({'bytes_processed':min(size,int(size*.25+processed*.75)),
-                                  'total_bytes':size,'lines':sum(row[1] for row in counts.values()),'phase':'PARALLEL','workers':len(segments)})
+                                  'total_bytes':size,'lines':sum(row[1] for row in counts.values()),'phase':'PARALLEL','workers':len(segments),
+                                  'phase_bytes_processed':processed,'phase_total_bytes':size,'eta_final_phase':True})
                     for future in done:
                         if future.exception():raise future.exception()
                     if not pending:break
