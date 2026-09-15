@@ -1,5 +1,9 @@
 import json
 import re
+import os
+import shutil
+import tempfile
+from pathlib import Path
 import xml.etree.ElementTree as ET
 from decimal import Decimal, localcontext
 from zipfile import ZipFile
@@ -24,7 +28,28 @@ def analyze_package(path,progress=None,cancelled=None):
         root=ET.fromstring(xml) if xml else None
         results=[]
         for info in gcodes:
-            with archive.open(info) as stream:result=scan(stream,info.file_size,progress,cancelled)
+            workers=max(1,min(8,int(os.getenv('GCODE_PARALLEL_WORKERS','1'))))
+            scratch=os.getenv('GCODE_SCRATCH_DIR')
+            if workers>1 and scratch and info.file_size>=8*1024*1024:
+                Path(scratch).mkdir(parents=True,exist_ok=True)
+                if shutil.disk_usage(scratch).free<info.file_size+64*1024*1024:scratch=None
+            else:scratch=None
+            if scratch:
+                from .parallel import analyze_parallel_file
+                with tempfile.TemporaryDirectory(prefix='gcode-',dir=scratch) as directory:
+                    extracted=Path(directory)/'plate.gcode';written=0
+                    with archive.open(info) as stream,extracted.open('wb') as output:
+                        while True:
+                            if cancelled and cancelled():raise RuntimeError('ANALYSIS_CANCELLED')
+                            block=stream.read(1024*1024)
+                            if not block:break
+                            output.write(block);written+=len(block)
+                            if progress:progress({'bytes_processed':int(written*.1),'total_bytes':info.file_size,'lines':0,'phase':'EXTRACT'})
+                    def mapped(value):
+                        if progress:progress({**value,'bytes_processed':int(info.file_size*.1+value['bytes_processed']*.9)})
+                    result=analyze_parallel_file(extracted,mapped,cancelled,workers)
+            else:
+                with archive.open(info) as stream:result=scan(stream,info.file_size,progress,cancelled)
             match=re.search(r'plate_(\d+)\.gcode$',info.filename,re.I);plate_id=match[1] if match else None
             result.update({'plate_id':plate_id,'archive_member':info.filename,'uncompressed_bytes':info.file_size})
             plate=None

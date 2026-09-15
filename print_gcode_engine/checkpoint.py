@@ -4,17 +4,19 @@ This module does not merge chunk outputs or enable a parallel quote path.
 """
 from decimal import Decimal, localcontext
 from pathlib import Path
+import time
+import re
 
 from .scanner import COMMAND, FIELDS, LINE_NUMBER, MOTION_CODES, SETPOINT, SETTINGS, LAYER_MARKER
 
 
-def segment_checkpoints(path, workers=4):
+def segment_checkpoints(path, workers=4, *, cancelled=None, progress=None):
     with localcontext() as context:
         context.prec=50
-        return _segment_checkpoints(path,workers)
+        return _segment_checkpoints(path,workers,cancelled,progress)
 
 
-def _segment_checkpoints(path, workers=4):
+def _segment_checkpoints(path, workers=4, cancelled=None, progress=None):
     """Return (start, end, initial_state) for plain layer-marked G-code.
 
     The pass tracks modal state only; expensive geometry, arc tangents, and
@@ -24,6 +26,12 @@ def _segment_checkpoints(path, workers=4):
     if workers<2 or workers>8:raise ValueError('INVALID_WORKER_COUNT')
     size=path.stat().st_size
     if path.suffix.lower() not in ('.gcode','.gco','.gc') or size<1024:return None
+    # Avoid a full extra modal pass for unlayered files. A very large first
+    # layer may conservatively choose serial analysis with this bounded probe.
+    with path.open('rb') as stream:head=stream.read(min(size,4*1024*1024))
+    markers=re.finditer(rb'(?mi)^;\s*(?:LAYER:|LAYER_CHANGE\b|CHANGE_LAYER\b)',head)
+    if next(markers,None) is None or next(markers,None) is None:return None
+    del head
     zero=Decimal(0)
     xyz={axis:zero for axis in 'XYZ'};offset={axis:zero for axis in 'XYZ'}
     epos={0:zero};retract={};tool=0;last_tool=None
@@ -31,6 +39,7 @@ def _segment_checkpoints(path, workers=4):
     plane='G17';absolute_center=False;config={};feature=None;stealth_start=False
     feed=0.0;diameters=[];setpoints={'nozzle':None,'bed':None,'chamber':None}
     cuts=[0];states=[]
+    lines=0;next_check=0
 
     def snapshot():
         return {'xyz':xyz.copy(),'offset':offset.copy(),'epos':epos.copy(),
@@ -43,9 +52,14 @@ def _segment_checkpoints(path, workers=4):
     states.append(snapshot())
     with path.open('rb') as stream:
         while True:
+            if lines%4096==0 and time.monotonic()>=next_check:
+                next_check=time.monotonic()+.5
+                if cancelled and cancelled():raise RuntimeError('ANALYSIS_CANCELLED')
+                if progress:progress({'bytes_processed':stream.tell(),'total_bytes':size,'lines':lines})
             position=stream.tell()
             binary=stream.readline(1024*1024+1)
             if not binary:break
+            lines+=1
             if len(binary)>1024*1024:raise ValueError('GCODE_LINE_TOO_LONG')
             if b'\x00' in binary:raise ValueError('BINARY_GCODE_NOT_SUPPORTED')
             text=binary.decode('utf-8','replace').strip()

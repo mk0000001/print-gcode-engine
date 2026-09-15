@@ -2,6 +2,7 @@
 import math
 import re
 import time
+import os
 from decimal import Decimal, localcontext
 from pathlib import Path
 from .arcs import arc_metrics
@@ -36,6 +37,10 @@ def analyze(path,progress=None,cancelled=None):
     if magic.startswith(b'PK'):
         from .package import analyze_package
         return analyze_package(path,progress,cancelled)
+    workers=max(1,min(8,int(os.getenv('GCODE_PARALLEL_WORKERS','1'))))
+    if workers>1 and path.stat().st_size>=8*1024*1024:
+        from .parallel import analyze_parallel_file
+        return analyze_parallel_file(path,progress,cancelled,workers)
     with localcontext() as ctx:
         ctx.prec=50
         with path.open('rb') as stream: return scan(stream,path.stat().st_size,progress,cancelled)
@@ -46,6 +51,7 @@ def scan(raw,total,progress=None,cancelled=None,*,initial_state=None,include_int
     absolute_xyz=True;absolute_e=True;scale=D(1);lines=0;layers=0;header_layers=None;max_z=None
     duration=None;model_time=None;grams=None;mass_values=[];warnings=[];sources={};config={};feature=None
     stealth_start=False
+    total_mass_seen=False
     reported=0;next_check=0;direction=[0.0,0.0,0.0];road_length=0.0;support_road_length=0.0
     bridge_road_length=0.0;overhang_road_length=0.0;brim_road_length=0.0
     first_model_z=None;first_model_bounds={axis:[None,None] for axis in 'XY'}
@@ -98,6 +104,7 @@ def scan(raw,total,progress=None,cancelled=None,*,initial_state=None,include_int
                 if any(v<0 for v in parsed):raise ValueError('INVALID_FILAMENT_MASS')
                 if lower.startswith('; total filament'):
                     grams=sum(parsed,D(0))
+                    total_mass_seen=True
                 else:
                     mass_values=parsed
                     if grams is None:grams=sum(parsed,D(0))
@@ -297,6 +304,8 @@ def scan(raw,total,progress=None,cancelled=None,*,initial_state=None,include_int
             'deposition_bounds':{axis:tuple(bound) for axis,bound in bounds.items()},
             'road_direction_moments_xyz':tuple(direction),'road_length_mm':road_length,
             'process_snapshot':process.snapshot(),'layer_volume':layer_volume.copy(),
+            'header_layers':header_layers,'mass_values':list(mass_values),'total_mass_seen':total_mass_seen,
+            'used':used.copy(),'seen_tools':tuple(sorted(tools)),
             'risk_lengths':(support_road_length,bridge_road_length,overhang_road_length,brim_road_length),
             'first_model_z':first_model_z,'first_model_bounds':first_model_bounds.copy()}
     return result
