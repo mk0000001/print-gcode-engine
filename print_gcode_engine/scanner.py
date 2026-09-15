@@ -295,5 +295,8 @@ def scan(raw,total,progress=None,cancelled=None,*,initial_state=None,include_int
             'diameters':list(process.diameters),'setpoints':{
                 component:getattr(process,component)['last'] for component in ('nozzle','bed','chamber')},
             'deposition_bounds':{axis:tuple(bound) for axis,bound in bounds.items()},
-            'road_direction_moments_xyz':tuple(direction),'road_length_mm':road_length}
+            'road_direction_moments_xyz':tuple(direction),'road_length_mm':road_length,
+            'process_snapshot':process.snapshot(),'layer_volume':layer_volume.copy(),
+            'risk_lengths':(support_road_length,bridge_road_length,overhang_road_length,brim_road_length),
+            'first_model_z':first_model_z,'first_model_bounds':first_model_bounds.copy()}
     return result

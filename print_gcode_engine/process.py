@@ -25,6 +25,17 @@ class Distribution:
         for index,weight in enumerate(self.bins):
             total+=weight
             if total>=self.weight*fraction:return round(2**((index-128+.5)/8),6)
+    def snapshot(self):
+        return {'bins':list(self.bins),'minimum':self.minimum,'maximum':self.maximum,'weight':self.weight}
+    def merge(self,snapshot):
+        bins=snapshot['bins']
+        if len(bins)!=len(self.bins) or any(not math.isfinite(v) or v<0 for v in bins):raise ValueError('INVALID_DISTRIBUTION_SNAPSHOT')
+        weight=snapshot['weight']
+        if not math.isfinite(weight) or weight<0:raise ValueError('INVALID_DISTRIBUTION_SNAPSHOT')
+        self.bins=[math.fsum((a,b)) for a,b in zip(self.bins,bins)]
+        self.weight=math.fsum((self.weight,weight))
+        if snapshot['minimum'] is not None:self.minimum=snapshot['minimum'] if self.minimum is None else min(self.minimum,snapshot['minimum'])
+        if snapshot['maximum'] is not None:self.maximum=snapshot['maximum'] if self.maximum is None else max(self.maximum,snapshot['maximum'])
     def result(self):
         return {'min':self.minimum,'max':self.maximum,'p50_approx':self.quantile(.5),'p95_approx':self.quantile(.95),
             'quantile_method':'TIME_WEIGHTED_LOG2_HISTOGRAM_8_BINS_PER_OCTAVE'}
@@ -50,3 +61,16 @@ class ProcessMetrics:
             'deposition_length_mm':self.length,'nominal_deposition_seconds':self.seconds,
             'speed_basis':'COMMANDED_FEEDRATE_NOT_MEASURED','duration_basis':'PATH_LENGTH_OVER_FEEDRATE_EXCLUDES_ACCELERATION',
             'material_volume_basis':'POSITIVE_EXTRUSION_AFTER_RETRACTION_RECOVERY_WITH_CONFIGURED_DIAMETER'}
+    def snapshot(self):
+        return {'ranges':{name:getattr(self,name).copy() for name in ('nozzle','bed','chamber','deposition_nozzle')},
+            'speeds':self.speeds.snapshot(),'flows':self.flows.snapshot(),'length':self.length,'seconds':self.seconds}
+    def merge(self,snapshot):
+        """Merge chunks in source order; never average per-chunk quantiles."""
+        self.speeds.merge(snapshot['speeds']);self.flows.merge(snapshot['flows'])
+        self.length=math.fsum((self.length,snapshot['length']))
+        self.seconds=math.fsum((self.seconds,snapshot['seconds']))
+        for name,incoming in snapshot['ranges'].items():
+            current=getattr(self,name)
+            if incoming['min'] is not None:current['min']=incoming['min'] if current['min'] is None else min(current['min'],incoming['min'])
+            if incoming['max'] is not None:current['max']=incoming['max'] if current['max'] is None else max(current['max'],incoming['max'])
+            if incoming['last'] is not None:current['last']=incoming['last']

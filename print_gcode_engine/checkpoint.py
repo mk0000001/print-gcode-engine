@@ -2,13 +2,19 @@
 
 This module does not merge chunk outputs or enable a parallel quote path.
 """
-from decimal import Decimal
+from decimal import Decimal, localcontext
 from pathlib import Path
 
-from .scanner import COMMAND, FIELDS, LINE_NUMBER, MOTION_CODES, SETPOINT, SETTINGS
+from .scanner import COMMAND, FIELDS, LINE_NUMBER, MOTION_CODES, SETPOINT, SETTINGS, LAYER_MARKER
 
 
 def segment_checkpoints(path, workers=4):
+    with localcontext() as context:
+        context.prec=50
+        return _segment_checkpoints(path,workers)
+
+
+def _segment_checkpoints(path, workers=4):
     """Return (start, end, initial_state) for plain layer-marked G-code.
 
     The pass tracks modal state only; expensive geometry, arc tangents, and
@@ -42,10 +48,10 @@ def segment_checkpoints(path, workers=4):
             if not binary:break
             if len(binary)>1024*1024:raise ValueError('GCODE_LINE_TOO_LONG')
             if b'\x00' in binary:raise ValueError('BINARY_GCODE_NOT_SUPPORTED')
-            if binary.startswith(b';LAYER_CHANGE') and len(cuts)<workers and position>=size*len(cuts)/workers:
-                cuts.append(position);states.append(snapshot())
             text=binary.decode('utf-8','replace').strip()
             if text.startswith(';'):
+                if len(cuts)<workers and position>=size*len(cuts)/workers and LAYER_MARKER.match(text):
+                    cuts.append(position);states.append(snapshot())
                 lower=text.lower()
                 if 'stealthchanger' in lower and ('print_start' in lower or 'toolchanger' in lower or 'tool change' in lower):stealth_start=True
                 if lower.startswith('; feature:') or lower.startswith(';type:'):feature=lower.split(':',1)[1].strip()
