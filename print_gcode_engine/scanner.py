@@ -58,9 +58,10 @@ def scan(raw,total,progress=None,cancelled=None,*,initial_state=None,include_int
     first_model_z=None;first_model_bounds={axis:[None,None] for axis in 'XY'}
     plane='G17';absolute_center=False;arc_count=0;arc_excluded=0
     process=ProcessMetrics()
-    layer_volume={};section_profile_limited=False
+    layer_volume={};layer_numbers={};layer_number=0;section_profile_limited=False
     last_absolute_motion=None
     if initial_state:
+        layer_number=initial_state.get('layer_number',0)
         xyz={axis:D(value) for axis,value in initial_state['xyz'].items()}
         offset={axis:D(value) for axis,value in initial_state['offset'].items()}
         epos={int(key):D(value) for key,value in initial_state['epos'].items()}
@@ -114,7 +115,8 @@ def scan(raw,total,progress=None,cancelled=None,*,initial_state=None,include_int
             if match:header_layers=int(match[1])
             match=HEIGHT_HEADER.match(text)
             if match:max_z=D(match[1])
-            if LAYER_MARKER.match(text):layers+=1
+            if LAYER_MARKER.match(text):
+                layers+=1;layer_number+=1
             if lower.startswith('; feature:') or lower.startswith(';type:'):feature=lower.split(':',1)[1].strip()
             match=SETTINGS.match(text)
             if match:
@@ -190,6 +192,9 @@ def scan(raw,total,progress=None,cancelled=None,*,initial_state=None,include_int
                         if level in layer_volume or len(layer_volume)<20000:
                             diameter=process.diameters[tool]
                             layer_volume[level]=layer_volume.get(level,0.0)+float(deposited)*math.pi*(diameter/2)**2
+                            number=layer_number or None
+                            if level not in layer_numbers:layer_numbers[level]=number
+                            elif layer_numbers[level]!=number:layer_numbers[level]=None
                         else:section_profile_limited=True
                 for axis in 'XYZ':
                     bounds[axis][0]=xyz[axis] if bounds[axis][0] is None else min(bounds[axis][0],xyz[axis],before[axis])
@@ -276,8 +281,9 @@ def scan(raw,total,progress=None,cancelled=None,*,initial_state=None,include_int
         'max_z_height_mm':plain(max_z),'warnings':warnings,'metric_sources':sources,'trust':'EXTERNAL_UNTRUSTED','lines':lines,
         'configuration':config,'material_usage':usage,'detected_materials':detected,'process_metrics':process.result(),
         'layer_volume_profile':{'basis':'POSITIVE_MODEL_EXTRUSION_VOLUME_BY_DEPOSITION_Z','unit':'mm3',
+            'layer_number_basis':'ONE_BASED_GCODE_LAYER_MARKER_ORDER',
             'z_quantization_mm':0.001,'incomplete':section_profile_limited,
-            'layers':[{'z_mm':z,'volume_mm3':round(volume,6)} for z,volume in sorted(layer_volume.items())]},
+            'layers':[{'z_mm':z,'volume_mm3':round(volume,6),'layer_number':layer_numbers.get(z)} for z,volume in sorted(layer_volume.items())]},
         'normal_output_color_count':len({u['color'] for u in usage if u['color']}) or None,
         'printer':detected_printer,'toolchanger_system':'STEALTHCHANGER' if (stealth_start or 'stealthchanger' in model_text) else None,
         'mmu_system':None,
@@ -304,7 +310,7 @@ def scan(raw,total,progress=None,cancelled=None,*,initial_state=None,include_int
                 component:getattr(process,component)['last'] for component in ('nozzle','bed','chamber')},
             'deposition_bounds':{axis:tuple(bound) for axis,bound in bounds.items()},
             'road_direction_moments_xyz':tuple(direction),'road_length_mm':road_length,
-            'process_snapshot':process.snapshot(),'layer_volume':layer_volume.copy(),
+            'process_snapshot':process.snapshot(),'layer_volume':layer_volume.copy(),'layer_numbers':layer_numbers.copy(),'layer_number':layer_number,
             'header_layers':header_layers,'mass_values':list(mass_values),'total_mass_seen':total_mass_seen,
             'used':used.copy(),'seen_tools':tuple(sorted(tools)),
             'risk_lengths':(support_road_length,bridge_road_length,overhang_road_length,brim_road_length),

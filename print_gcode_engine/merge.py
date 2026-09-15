@@ -60,11 +60,14 @@ def _merge(chunks):
     process=ProcessMetrics()
     for state in states:process.merge(state['process_snapshot'])
     result['process_metrics']=process.result()
-    volumes={}
+    volumes={};numbers={}
     for state in states:
         for z,volume in state['layer_volume'].items():volumes.setdefault(z,[]).append(volume)
+        for z,number in state['layer_numbers'].items():
+            if z not in numbers:numbers[z]=number
+            elif numbers[z]!=number:numbers[z]=None
     if len(volumes)>20000 or any(row['layer_volume_profile']['incomplete'] for row in chunks):raise ValueError('PARALLEL_PROFILE_LIMIT')
-    result['layer_volume_profile']['layers']=[{'z_mm':z,'volume_mm3':round(fsum(v),6)} for z,v in sorted(volumes.items())]
+    result['layer_volume_profile']['layers']=[{'z_mm':z,'volume_mm3':round(fsum(v),6),'layer_number':numbers.get(z)} for z,v in sorted(volumes.items())]
     road=fsum(state['road_length_mm'] for state in states)
     moments=[fsum(state['road_direction_moments_xyz'][i] for state in states) for i in range(3)]
     orientation=result['orientation']

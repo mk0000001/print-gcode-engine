@@ -39,7 +39,7 @@ def _segment_checkpoints(path, workers=4, cancelled=None, progress=None):
     plane='G17';absolute_center=False;config={};feature=None;stealth_start=False
     feed=0.0;diameters=[];setpoints={'nozzle':None,'bed':None,'chamber':None}
     cuts=[0];states=[]
-    lines=0;next_check=0
+    lines=0;next_check=0;layer_number=0
 
     def snapshot():
         return {'xyz':xyz.copy(),'offset':offset.copy(),'epos':epos.copy(),
@@ -47,7 +47,7 @@ def _segment_checkpoints(path, workers=4, cancelled=None, progress=None):
             'absolute_xyz':absolute_xyz,'absolute_e':absolute_e,'scale':scale,
             'plane':plane,'absolute_center':absolute_center,'config':config.copy(),
             'feature':feature,'stealth_start':stealth_start,'feed':feed,
-            'diameters':list(diameters),'setpoints':setpoints.copy()}
+            'diameters':list(diameters),'setpoints':setpoints.copy(),'layer_number':layer_number}
 
     states.append(snapshot())
     with path.open('rb') as stream:
@@ -66,6 +66,7 @@ def _segment_checkpoints(path, workers=4, cancelled=None, progress=None):
             if text.startswith(';'):
                 if len(cuts)<workers and position>=size*len(cuts)/workers and LAYER_MARKER.match(text):
                     cuts.append(position);states.append(snapshot())
+                if LAYER_MARKER.match(text):layer_number+=1
                 lower=text.lower()
                 if 'stealthchanger' in lower and ('print_start' in lower or 'toolchanger' in lower or 'tool change' in lower):stealth_start=True
                 if lower.startswith('; feature:') or lower.startswith(';type:'):feature=lower.split(':',1)[1].strip()
