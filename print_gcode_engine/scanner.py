@@ -70,6 +70,8 @@ def scan(raw,total,progress=None,cancelled=None,*,initial_state=None,include_int
     plane='G17';absolute_center=False;arc_count=0;arc_excluded=0
     process=ProcessMetrics()
     layer_volume={};layer_numbers={};layer_number=0;section_profile_limited=False
+    # PrusaSlicer-family files declare filament diameter only in the trailing config block.
+    pending_volume={};pending_levels=set()
     last_absolute_motion=None
     cached_z=None;cached_level=None
     if initial_state:
@@ -203,17 +205,21 @@ def scan(raw,total,progress=None,cancelled=None,*,initial_state=None,include_int
                 motion_callback(layer_number,before,xyz,feature_name,tool,deposited,arc)
             if deposited>0 and has_path and feature_name not in ('custom','prime tower','wipe tower'):
                 if not support_feature and not auxiliary_feature and xyz['Z']>=0:
-                    if 0<=tool<len(process.diameters) and process.diameters[tool]>0:
-                        if xyz['Z']!=cached_z:
-                            cached_z=xyz['Z'];cached_level=round(float(cached_z),3)
-                        level=cached_level
-                        if level in layer_volume or len(layer_volume)<20000:
+                    if xyz['Z']!=cached_z:
+                        cached_z=xyz['Z'];cached_level=round(float(cached_z),3)
+                    level=cached_level
+                    known=0<=tool<len(process.diameters) and process.diameters[tool]>0
+                    if level in layer_volume or level in pending_levels or len(layer_volume)+len(pending_levels)<20000:
+                        if known:
                             diameter=process.diameters[tool]
                             layer_volume[level]=layer_volume.get(level,0.0)+float(deposited)*math.pi*(diameter/2)**2
-                            number=layer_number or None
-                            if level not in layer_numbers:layer_numbers[level]=number
-                            elif layer_numbers[level]!=number:layer_numbers[level]=None
-                        else:section_profile_limited=True
+                        else:
+                            pending_levels.add(level)
+                            pending_volume[(level,tool)]=pending_volume.get((level,tool),0.0)+float(deposited)
+                        number=layer_number or None
+                        if level not in layer_numbers:layer_numbers[level]=number
+                        elif layer_numbers[level]!=number:layer_numbers[level]=None
+                    else:section_profile_limited=True
                 for axis in 'XYZ':
                     bound=bounds[axis];end=xyz[axis];start=before[axis]
                     if bound[0] is None:bound[0]=end
@@ -261,6 +267,11 @@ def scan(raw,total,progress=None,cancelled=None,*,initial_state=None,include_int
     if duration is None:warnings.append('PRINT_TIME_NOT_AVAILABLE')
     if grams is None:warnings.append('FILAMENT_MASS_NOT_AVAILABLE')
     if section_profile_limited:warnings.append('LAYER_VOLUME_PROFILE_LIMITED_TO_20000_HEIGHTS')
+    for (level,tool),millimetres in list(pending_volume.items()):
+        if 0<=tool<len(process.diameters) and process.diameters[tool]>0:
+            diameter=process.diameters[tool]
+            layer_volume[level]=layer_volume.get(level,0.0)+millimetres*math.pi*(diameter/2)**2
+            pending_volume.pop((level,tool))
     support_ratio=support_road_length/(road_length+support_road_length) if road_length+support_road_length else None
     difficult_ratio=(support_road_length+bridge_road_length+overhang_road_length)/(road_length+support_road_length) if road_length+support_road_length else None
     first_sizes=[float(hi-lo) for lo,hi in first_model_bounds.values() if lo is not None and hi is not None and hi>lo]
@@ -326,7 +337,8 @@ def scan(raw,total,progress=None,cancelled=None,*,initial_state=None,include_int
                 component:getattr(process,component)['last'] for component in ('nozzle','bed','chamber')},
             'deposition_bounds':{axis:tuple(bound) for axis,bound in bounds.items()},
             'road_direction_moments_xyz':tuple(direction),'road_length_mm':road_length,
-            'process_snapshot':process.snapshot(),'layer_volume':layer_volume.copy(),'layer_numbers':layer_numbers.copy(),'layer_number':layer_number,
+            'process_snapshot':process.snapshot(),'layer_volume':layer_volume.copy(),'pending_volume':{f'{level}|{tool}':value for (level,tool),value in pending_volume.items()},
+            'layer_numbers':layer_numbers.copy(),'layer_number':layer_number,
             'header_layers':header_layers,'mass_values':list(mass_values),'total_mass_seen':total_mass_seen,
             'used':used.copy(),'seen_tools':tuple(sorted(tools)),
             'risk_lengths':(support_road_length,bridge_road_length,overhang_road_length,brim_road_length),

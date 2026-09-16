@@ -1,7 +1,7 @@
 """Ordered merge of checkpoint-initialized scan chunks. Experimental."""
 from copy import deepcopy
 from decimal import Decimal, localcontext
-from math import fsum
+from math import fsum, pi
 import re
 
 from .process import ProcessMetrics
@@ -61,8 +61,14 @@ def _merge(chunks):
     for state in states:process.merge(state['process_snapshot'])
     result['process_metrics']=process.result()
     volumes={};numbers={}
+    try:merged_diameters=[float(v) for v in str(config.get('filament_diameter','')).replace(';',',').split(',') if v.strip()]
+    except ValueError:merged_diameters=[]
     for state in states:
         for z,volume in state['layer_volume'].items():volumes.setdefault(z,[]).append(volume)
+        for key,millimetres in (state.get('pending_volume') or {}).items():
+            level,_,tool=key.partition('|');tool=int(tool)
+            if 0<=tool<len(merged_diameters) and merged_diameters[tool]>0:
+                volumes.setdefault(float(level),[]).append(millimetres*pi*(merged_diameters[tool]/2)**2)
         for z,number in state['layer_numbers'].items():
             if z not in numbers:numbers[z]=number
             elif numbers[z]!=number:numbers[z]=None
